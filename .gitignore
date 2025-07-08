@@ -8,3 +8,6 @@ config.py
 .ipynb_checkpoints/
 **/.ipynb_checkpoints/
 
+*.npy
+*.png
+.ipynb_checkpoints/
