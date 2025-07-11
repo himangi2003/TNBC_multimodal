@@ -11,3 +11,6 @@ config.py
 *.npy
 *.png
 .ipynb_checkpoints/
+
+#ignore folders
+sample_wsi_results
