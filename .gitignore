@@ -1,8 +1,7 @@
 # Ignore configuration file
 config.py
 
-# Ignore Jupyter notebooks
-*.ipynb
+
 
 # Ignore Jupyter notebook checkpoints
 .ipynb_checkpoints/
