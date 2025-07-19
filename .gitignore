@@ -6,7 +6,7 @@ config.py
 # Ignore Jupyter notebook checkpoints
 .ipynb_checkpoints/
 **/.ipynb_checkpoints/
-
+*.tif
 *.npy
 *.png
 .ipynb_checkpoints/
