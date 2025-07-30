@@ -110,3 +110,102 @@ def extract_and_save_patches(
     stride=(224, 224),
     min_mask_ratio=0.5,
 )
+
+
+
+ 
+import os
+import re
+import cv2
+import numpy as np
+import pandas as pd
+from PIL import Image
+from skimage.color import rgb2hed
+from skimage.filters import threshold_otsu, gaussian
+from skimage.morphology import remove_small_objects, remove_small_holes, label
+
+def is_pen_dominated(tile_rgb, sat_thresh=30, hue_range_thresh=10):
+    hsv = cv2.cvtColor(tile_rgb, cv2.COLOR_RGB2HSV)
+    high_sat = hsv[:, :, 1] > sat_thresh
+    if np.sum(high_sat) / high_sat.size < 0.6:
+        return False
+    hue_vals = hsv[:, :, 0][high_sat]
+    if len(hue_vals) == 0:
+        return False
+    hue_range = np.percentile(hue_vals, 95) - np.percentile(hue_vals, 5)
+    return hue_range < hue_range_thresh
+
+def get_tissue_mask_basic(rgb_image, deconvolve_first=True, sigma=1.2, min_size=300):
+    if deconvolve_first:
+        hed = rgb2hed(rgb_image)
+        hema = -hed[:, :, 0]
+        hema = (hema - np.min(hema)) / (np.max(hema) - np.min(hema) + 1e-6)
+        gray_image = hema
+    else:
+        gray_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY) / 255.0
+    smooth = gaussian(gray_image, sigma=sigma)
+    thresh = threshold_otsu(smooth)
+    mask = smooth > thresh
+    mask = remove_small_objects(mask, min_size=min_size)
+    mask = remove_small_holes(mask, area_threshold=min_size)
+    labeled = label(mask)
+    return labeled, mask.astype(np.uint8)
+
+def is_good_tissue_tile(image_path):
+    try:
+        tile = cv2.imread(image_path)
+        if tile is None or tile.shape[:2] != (224, 224):
+            return False
+        tile_rgb = cv2.cvtColor(tile, cv2.COLOR_BGR2RGB)
+        hsv = cv2.cvtColor(tile_rgb, cv2.COLOR_RGB2HSV)
+        if np.mean(hsv[:, :, 1]) < 15:
+            return False
+        if is_pen_dominated(tile_rgb):
+            return False
+        _, tissue_mask = get_tissue_mask_basic(tile_rgb)
+        return np.sum(tissue_mask) > 0.12 * tissue_mask.size
+    except Exception:
+        return False
+
+def process_extracted_tiles_reindex_only(tile_dir, metadata_csv, output_dir):
+    df_original = pd.read_csv(metadata_csv)
+    os.makedirs(output_dir, exist_ok=True)
+
+    df_original["tile_path"] = df_original["filename"].apply(lambda x: os.path.join(tile_dir, x))
+    df_original["is_tissue"] = df_original["tile_path"].apply(is_good_tissue_tile)
+
+    df_original.to_csv(os.path.join(tile_dir, "tile_classification_with_coords.csv"), index=False)
+
+    filtered_df = df_original[df_original["is_tissue"]].copy().reset_index(drop=True)
+
+    clean_metadata = []
+    for idx, row in filtered_df.iterrows():
+        old_path = row["tile_path"]
+        match = re.match(r"tile_\d+_(\d+)_(\d+)\.png", row["filename"])
+        if match:
+            x, y = match.groups()
+            new_filename = f"tile_{idx}_{x}_{y}.png"
+        else:
+            new_filename = f"tile_{idx:05d}.png"
+
+        new_path = os.path.join(output_dir, new_filename)
+        Image.open(old_path).save(new_path)
+
+        clean_metadata.append({
+            "new_index": idx,
+            "new_filename": new_filename,
+            "original_filename": row["filename"],
+            "x": row["x"],
+            "y": row["y"]
+        })
+
+    df_clean = pd.DataFrame(clean_metadata)
+    df_clean.to_csv(os.path.join(output_dir, "filtered_tissue_tiles.csv"), index=False)
+
+    print("✅ Processing complete.")
+    print(f"📄 Classification saved: {os.path.join(tile_dir, 'tile_classification_with_coords.csv')}")
+    print(f"📄 Filtered tile metadata: {os.path.join(output_dir, 'filtered_tissue_tiles.csv')}")
+    print(f"🖼️  Clean tissue tiles saved in: {output_dir}")
+
+# Example usage:
+process_extracted_tiles_reindex_only("Output5", "Output5/pipeline_tiles.csv", "clean_tiles")
